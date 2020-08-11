@@ -16,11 +16,21 @@
 
 package org.springframework.boot.convert;
 
+import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 import org.springframework.beans.factory.ListableBeanFactory;
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
+import org.springframework.core.ResolvableType;
 import org.springframework.core.convert.ConversionService;
+import org.springframework.core.convert.TypeDescriptor;
+import org.springframework.core.convert.converter.ConditionalConverter;
+import org.springframework.core.convert.converter.ConditionalGenericConverter;
 import org.springframework.core.convert.converter.Converter;
 import org.springframework.core.convert.converter.ConverterRegistry;
 import org.springframework.core.convert.converter.GenericConverter;
@@ -44,6 +54,7 @@ import org.springframework.util.StringValueResolver;
  * against registry instance.
  *
  * @author Phillip Webb
+ * @author 郭 世雄 viviel
  * @since 2.0.0
  */
 public class ApplicationConversionService extends FormattingConversionService {
@@ -157,17 +168,29 @@ public class ApplicationConversionService extends FormattingConversionService {
 	 * @since 2.2.0
 	 */
 	public static void addBeans(FormatterRegistry registry, ListableBeanFactory beanFactory) {
-		Set<Object> beans = new LinkedHashSet<>();
-		beans.addAll(beanFactory.getBeansOfType(GenericConverter.class).values());
-		beans.addAll(beanFactory.getBeansOfType(Converter.class).values());
-		beans.addAll(beanFactory.getBeansOfType(Printer.class).values());
-		beans.addAll(beanFactory.getBeansOfType(Parser.class).values());
-		for (Object bean : beans) {
+		Set<Map.Entry<String, ?>> entries = new LinkedHashSet<>();
+		entries.addAll(beanFactory.getBeansOfType(GenericConverter.class).entrySet());
+		entries.addAll(beanFactory.getBeansOfType(Converter.class).entrySet());
+		entries.addAll(beanFactory.getBeansOfType(Printer.class).entrySet());
+		entries.addAll(beanFactory.getBeansOfType(Parser.class).entrySet());
+		for (Map.Entry<String, ?> entity : entries) {
+			Object bean = entity.getValue();
 			if (bean instanceof GenericConverter) {
 				registry.addConverter((GenericConverter) bean);
 			}
 			else if (bean instanceof Converter) {
-				registry.addConverter((Converter<?, ?>) bean);
+				if (beanFactory instanceof ConfigurableListableBeanFactory) {
+					ConverterAdapter adapter = getConverterAdapter((ConfigurableListableBeanFactory) beanFactory, entity);
+					if (!Objects.isNull(adapter)) {
+						registry.addConverter(adapter);
+					}
+					else {
+						registry.addConverter((Converter<?, ?>) bean);
+					}
+				}
+				else {
+					registry.addConverter((Converter<?, ?>) bean);
+				}
 			}
 			else if (bean instanceof Formatter) {
 				registry.addFormatter((Formatter<?>) bean);
@@ -178,6 +201,89 @@ public class ApplicationConversionService extends FormattingConversionService {
 			else if (bean instanceof Parser) {
 				registry.addParser((Parser<?>) bean);
 			}
+		}
+	}
+
+	private static ConverterAdapter getConverterAdapter(ConfigurableListableBeanFactory beanFactory, Map.Entry<String, ?> beanEntity) {
+		System.out.println();
+		System.out.println();
+		BeanDefinition beanDefinition = beanFactory.getBeanDefinition(beanEntity.getKey());
+		ResolvableType resolvableType = beanDefinition.getResolvableType();
+		ResolvableType[] types = resolvableType.getGenerics();
+		if (types.length < 2) {
+			return null;
+		}
+		return new ConverterAdapter((Converter<?, ?>) beanEntity.getValue(), types[0], types[1]);
+	}
+
+	/**
+	 * Adapts a {@link Converter} to a {@link GenericConverter}.
+	 */
+	@SuppressWarnings("unchecked")
+	private static final class ConverterAdapter implements ConditionalGenericConverter {
+
+		private final Converter<Object, Object> converter;
+
+		private final ConvertiblePair typeInfo;
+
+		private final ResolvableType targetType;
+
+		ConverterAdapter(Converter<?, ?> converter, ResolvableType sourceType, ResolvableType targetType) {
+			this.converter = (Converter<Object, Object>) converter;
+			this.typeInfo = new ConvertiblePair(sourceType.toClass(), targetType.toClass());
+			this.targetType = targetType;
+		}
+
+		@Override
+		public Set<ConvertiblePair> getConvertibleTypes() {
+			return Collections.singleton(this.typeInfo);
+		}
+
+		@Override
+		public boolean matches(TypeDescriptor sourceType, TypeDescriptor targetType) {
+			// Check raw type first...
+			if (this.typeInfo.getTargetType() != targetType.getObjectType()) {
+				return false;
+			}
+			// Full check for complex generic type match required?
+			ResolvableType rt = targetType.getResolvableType();
+			if (!(rt.getType() instanceof Class) && !rt.isAssignableFrom(this.targetType)
+					&& !this.targetType.hasUnresolvableGenerics()) {
+				return false;
+			}
+			return !(this.converter instanceof ConditionalConverter)
+					|| ((ConditionalConverter) this.converter).matches(sourceType, targetType);
+		}
+
+		@Override
+		public Object convert(Object source, TypeDescriptor sourceType, TypeDescriptor targetType) {
+			if (source == null) {
+				return convertNullSource(sourceType, targetType);
+			}
+			return this.converter.convert(source);
+		}
+
+		@Override
+		public String toString() {
+			return (this.typeInfo + " : " + this.converter);
+		}
+
+		/**
+		 * Template method to convert a {@code null} source.
+		 * <p>
+		 * The default implementation returns {@code null} or the Java 8
+		 * {@link java.util.Optional#empty()} instance if the target type is
+		 * {@code java.util.Optional}. Subclasses may override this to return custom
+		 * {@code null} objects for specific target types.
+		 * @param sourceType the source type to convert from
+		 * @param targetType the target type to convert to
+		 * @return the converted null object
+		 */
+		private Object convertNullSource(TypeDescriptor sourceType, TypeDescriptor targetType) {
+			if (targetType.getObjectType() == Optional.class) {
+				return Optional.empty();
+			}
+			return null;
 		}
 	}
 
