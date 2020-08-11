@@ -206,7 +206,6 @@ public class ApplicationConversionService extends FormattingConversionService {
 
 	private static ConverterAdapter getConverterAdapter(ConfigurableListableBeanFactory beanFactory, Map.Entry<String, ?> beanEntity) {
 		System.out.println();
-		System.out.println();
 		BeanDefinition beanDefinition = beanFactory.getBeanDefinition(beanEntity.getKey());
 		ResolvableType resolvableType = beanDefinition.getResolvableType();
 		ResolvableType[] types = resolvableType.getGenerics();
