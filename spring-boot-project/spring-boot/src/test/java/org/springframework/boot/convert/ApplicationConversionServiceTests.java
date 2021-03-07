@@ -25,7 +25,9 @@ import org.junit.jupiter.api.Test;
 
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.context.annotation.Bean;
 import org.springframework.core.convert.TypeDescriptor;
+import org.springframework.core.convert.converter.ConditionalGenericConverter;
 import org.springframework.core.convert.converter.Converter;
 import org.springframework.core.convert.converter.GenericConverter;
 import org.springframework.format.Formatter;
@@ -34,6 +36,8 @@ import org.springframework.format.Parser;
 import org.springframework.format.Printer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.isA;
+import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -42,6 +46,7 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
  * Tests for {@link ApplicationConversionService}.
  *
  * @author Phillip Webb
+ * @author 郭 世雄
  */
 class ApplicationConversionServiceTests {
 
@@ -62,6 +67,30 @@ class ApplicationConversionServiceTests {
 		try (ConfigurableApplicationContext context = new AnnotationConfigApplicationContext(ExampleConverter.class)) {
 			ApplicationConversionService.addBeans(this.registry, context);
 			verify(this.registry).addConverter(context.getBean(ExampleConverter.class));
+			verifyNoMoreInteractions(this.registry);
+		}
+	}
+
+	@Test
+	void addBeansWhenHasLambdaConverterBeanAddConverter() {
+		try (ConfigurableApplicationContext context = new AnnotationConfigApplicationContext(
+				ExampleLambdaConverter.class)) {
+			willThrow(IllegalArgumentException.class).given(this.registry).addConverter(isA(Converter.class));
+			ApplicationConversionService.addBeans(this.registry, context);
+			verify(this.registry).addConverter(context.getBean(Converter.class));
+			verify(this.registry).addConverter(isA(ConditionalGenericConverter.class));
+			verifyNoMoreInteractions(this.registry);
+		}
+	}
+
+	@Test
+	void addBeansWhenHasMethodReferenceConverterBeanAddConverter() {
+		try (ConfigurableApplicationContext context = new AnnotationConfigApplicationContext(
+				ExampleMethodReferenceConverter.class)) {
+			willThrow(IllegalArgumentException.class).given(this.registry).addConverter(isA(Converter.class));
+			ApplicationConversionService.addBeans(this.registry, context);
+			verify(this.registry).addConverter(context.getBean(Converter.class));
+			verify(this.registry).addConverter(isA(ConditionalGenericConverter.class));
 			verifyNoMoreInteractions(this.registry);
 		}
 	}
@@ -132,6 +161,24 @@ class ApplicationConversionServiceTests {
 		@Override
 		public Integer convert(String source) {
 			return null;
+		}
+
+	}
+
+	static class ExampleLambdaConverter {
+
+		@Bean
+		Converter<String, Integer> converter() {
+			return (e) -> Integer.valueOf(e);
+		}
+
+	}
+
+	static class ExampleMethodReferenceConverter {
+
+		@Bean
+		Converter<String, Integer> converter() {
+			return Integer::valueOf;
 		}
 
 	}
